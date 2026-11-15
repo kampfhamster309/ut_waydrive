@@ -1,0 +1,12 @@
+[Unit]
+Description=Android Auto USB relay (car <-> Android Auto in Waydroid)
+After=usb-moded.service sys-kernel-config.mount
+
+[Service]
+ExecStart=/usr/bin/python3 -u /userdata/android-auto/aa-bridge.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=25
+
+[Install]
+WantedBy=multi-user.target
