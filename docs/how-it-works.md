@@ -17,9 +17,18 @@ So the relay copies bytes between `/dev/usb_accessory` and `<waydroid-ip>:5277`.
 2. **Car plugs in** and sends `GET_PROTOCOL`, six `SEND_STRING`s and `START`. The kernel emits the uevent `ACCESSORY=START`.
 3. **Switch.** The relay asks `usb-moded` for its current mode, freezes it (`SIGSTOP`), unbinds `g1`, replaces its function links with the accessory function, sets `18d1:2d00` and binds again. This takes a few milliseconds.
 4. **Relay.** It opens `/dev/usb_accessory`, connects to port 5277 and pumps bytes both ways. It starts `aa-gps-bridge.py`.
+   It also follows Android's log: when Android Auto announces its phone-side dialog (`PREFLIGHT_UI_STARTING`), the relay opens Android's screen as a window on the phone.
 5. **End.** The session ends when the UDC reports "not attached", when Android Auto closes the socket, or when nothing has arrived from the car for 20 s. The relay unbinds, removes the accessory link, thaws `usb-moded` and asks it over D-Bus to re-apply the previous mode (`charging_only`, then the old mode). It saves Android's logcat and arms a fresh server.
 
 A keeper thread starts the Waydroid session after a reboot and re-arms if Android Auto has died.
+
+## First connection to a car
+
+Android Auto keeps a list of allowed cars, keyed by the vehicle id the head unit reports. For an unknown car it logs `Triggering FRX: car connection is not allowed`, goes to the state `PREFLIGHT`, projects "When safe, check your phone to start Android Auto" to the car and starts `PreflightPhoneWelcomeActivity` on the phone: terms plus "allow this car". Nothing else happens until that is confirmed.
+
+On Ubuntu Touch, Android normally has no window, so nobody sees that dialog. The relay opens one (`show_android_ui`): it sets `waydroid.active_apps` to `Waydroid`, which makes Waydroid's compositor create its full-screen window, and Lomiri shows it as an app. The user unlocks the phone and confirms. After `Added car to Allowed Cars list` the session continues, and later connections of that car skip the step.
+
+The same function serves manual requests: `show-android.sh` creates `/run/user/<uid>/aa-show-android`, the relay sees the file within a second. This needs no root on the user's side, and it avoids the cases where `waydroid show-full-ui` does nothing (see [pitfalls.md](pitfalls.md)).
 
 ## Why each odd detail exists
 
@@ -31,6 +40,8 @@ A keeper thread starts the Waydroid session after a reboot and re-arms if Androi
 | A fresh Android Auto process per session | The head unit server accepts one client per process. A second connection, even a port probe, later crashes it with "Already connected". |
 | `debug.stagefright.c2inputsurface=-1` | The video encoder's input surface must be created inside the 64-bit Android Auto process. The default (a 32-bit OMX service) cannot allocate graphics buffers on this host; the host's Codec2 service can create one but cannot be connected to from the container. |
 | MediaTek encoders disabled in the container | `c2.mtk.avc.encoder` accepts frames from Waydroid and never returns them. The software encoder works. |
+| The Android window is closed (`waydroid.active_apps=none`) before it is opened | If Waydroid still counts a window as open, a new request creates nothing. Closing through the property does not remove Android tasks, unlike closing the window in the shell. |
+| Android's log of each session is saved under a dated name | The first car test was hard to analyse because the next session overwrote the log. |
 | GPS provider registered before a session | Waze shows "Location disabled" if Android has no enabled `gps` provider when Android Auto starts it. |
 | GPS client runs only during a session | So the GNSS receiver is off otherwise. |
 | The GPS client stops on a stop-file | Killing location clients abruptly hung `lomiri-location-service` once. |

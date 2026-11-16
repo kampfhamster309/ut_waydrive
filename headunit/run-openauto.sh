@@ -3,6 +3,7 @@
 #
 #   ./run-openauto.sh                    # USB + TCP, window on host display
 #   ./run-openauto.sh --host 192.168.1.50   # also pre-fill/auto-connect TCP to that IP:5277
+#   ./run-openauto.sh --car-id 4711       # pose as a car the phone has never seen
 #   ./run-openauto.sh --no-usb           # no /dev/bus/usb, not privileged (TCP only, safe)
 #   ./run-openauto.sh --shell            # bash in the container instead of autoapp
 #   ./run-openauto.sh -- <cmd...>        # run an arbitrary command in the container
@@ -19,10 +20,11 @@ CMD=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --host)   AA_HOST="$2"; shift 2 ;;
+        --car-id) AA_CAR_ID="$2"; shift 2 ;;
         --no-usb) USB=0; shift ;;
         --shell)  CMD=(bash); shift ;;
         --)       shift; CMD=("$@"); break ;;
-        -h|--help) sed -n 2,11p "$0"; exit 0 ;;
+        -h|--help) sed -n 2,12p "$0"; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -33,7 +35,9 @@ ARGS=(--rm -it --name "$NAME" --network host --ipc host
       -e DISPLAY="${DISPLAY:-:0}" -v /tmp/.X11-unix:/tmp/.X11-unix:ro
       -e QT_X11_NO_MITSHM=1
       -v "$HERE/config:/home/hu/openauto"
-      -e AA_HOST="$AA_HOST")
+      -e AA_HOST="$AA_HOST"
+      -e AA_CAR_ID="${AA_CAR_ID:-}" -e AA_CAR_MAKE="${AA_CAR_MAKE:-}"
+      -e AA_CAR_MODEL="${AA_CAR_MODEL:-}" -e AA_CAR_YEAR="${AA_CAR_YEAR:-}")
 [ -t 0 ] || ARGS=("${ARGS[@]/-it/-i}")
 
 # XWayland auth cookie

@@ -1,0 +1,34 @@
+diff --git a/src/autoapp/Service/AndroidAutoEntity.cpp b/src/autoapp/Service/AndroidAutoEntity.cpp
+index 09dce1b..8aa9b1d 100644
+--- a/src/autoapp/Service/AndroidAutoEntity.cpp
++++ b/src/autoapp/Service/AndroidAutoEntity.cpp
+@@ -16,6 +16,8 @@
+ *  along with openauto. If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
++#include <cstdlib>
++#include <string>
+ #include <aasdk/Channel/Control/ControlServiceChannel.hpp>
+ #include <f1x/openauto/autoapp/Service/AndroidAutoEntity.hpp>
+ #include <f1x/openauto/Common/Log.hpp>
+@@ -194,10 +196,16 @@ namespace f1x {
+           auto *headUnitInfo = serviceDiscoveryResponse.mutable_headunit_info();
+ 
+           serviceDiscoveryResponse.set_display_name("Crankshaft-NG");
+-          headUnitInfo->set_make("Crankshaft");
+-          headUnitInfo->set_model("Universal");
+-          headUnitInfo->set_year("2018");
+-          headUnitInfo->set_vehicle_id("2024110822150988");
++          // Waydrive: the car identity can be overridden from the environment, so the
++          // emulator can pose as a car the phone has never seen (first-connection flow).
++          auto envOr = [](const char *name, const char *fallback) {
++            const char *value = std::getenv(name);
++            return std::string((value != nullptr && *value != '\0') ? value : fallback);
++          };
++          headUnitInfo->set_make(envOr("AA_CAR_MAKE", "Crankshaft"));
++          headUnitInfo->set_model(envOr("AA_CAR_MODEL", "Universal"));
++          headUnitInfo->set_year(envOr("AA_CAR_YEAR", "2018"));
++          headUnitInfo->set_vehicle_id(envOr("AA_CAR_ID", "2024110822150988"));
+           headUnitInfo->set_head_unit_make("f1x");
+           headUnitInfo->set_head_unit_model("Crankshaft-NG Autoapp");
+           headUnitInfo->set_head_unit_software_build("1");

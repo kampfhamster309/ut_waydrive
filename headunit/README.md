@@ -20,6 +20,7 @@ no Raspberry Pi / OMX bits; video goes through Qt Multimedia + GStreamer).
   (shows the Wifi button, optional TCP target), then execs `autoapp`.
 - `build.sh` - clones the two repos into `src/` if missing and builds image `openauto-hu`.
 - `run-openauto.sh` - starts the container with display/USB/audio/network flags.
+- `patches/` - local changes to OpenAuto, applied by `build.sh` (the vehicle identity can be set with `AA_CAR_ID`, `AA_CAR_MAKE`, `AA_CAR_MODEL`, `AA_CAR_YEAR`).
 - `config/` - bind-mounted as the app's working directory (created on first run).
 - `screenshot-mainwindow.png` - main screen as rendered on the PC.
 
@@ -36,6 +37,7 @@ cd headunit
 ./run-openauto.sh                   # USB + TCP; --privileged, /dev/bus/usb, /run/udev
 ./run-openauto.sh --no-usb          # TCP only, no USB access, not privileged
 ./run-openauto.sh --host 10.0.0.5   # pre-fill the TCP target (see below)
+./run-openauto.sh --car-id 4711     # report another vehicle id: a car the phone has not seen
 ./run-openauto.sh --shell           # bash inside the container
 ```
 

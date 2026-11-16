@@ -57,6 +57,23 @@ It does this when Android has no enabled `gps` provider at the moment Android Au
 
 After several location clients were killed with a signal, `lomiri-location-service` stopped answering; the quick-settings toggle and the Settings page then disagreed. `sudo systemctl restart lomiri-location-service` fixes it. The GPS client therefore exits on request (a stop file) after stopping its `PositionSource`.
 
+## "When safe, check your phone to start Android Auto"
+
+A car Android Auto has not seen needs a confirmation on the phone (see [how-it-works.md](how-it-works.md)). Without an Android window the session waits forever; the relay's byte counter for phone→car stops at about 110 KB. In logcat: `Triggering FRX: car connection is not allowed`, `PREFLIGHT_UI_STARTING`. The first real-car test ended exactly here. The emulator does not show this by default because its vehicle id is fixed; use `run-openauto.sh --car-id <new>`.
+
+## Android's window on the phone
+
+Observed with Lomiri/qtmir 0.7.2 and Waydroid 1.6.3:
+
+- On a fresh Waydroid session `waydroid show-full-ui` opens the window, and it survives app switching and locking.
+- After the window has been swiped away in the app switcher, tapping the stock Waydroid icon does nothing. Lomiri does not start the launcher at all. The reason is not known. Opening the window from outside still works.
+- In sessions that had been running for hours, `waydroid show-full-ui` sometimes created no window. Unconfirmed guess: Waydroid still counted a window as open that the shell no longer showed. Setting `waydroid.active_apps` to `none`, letting Android draw a frame, and then setting it to `Waydroid` is what the relay does, and that has worked every time so far.
+- qtmir gives a Waydroid window its app entry from the window's app id, which must match a launcher file in `~/.local/share/applications/`. `NoDisplay=true` in `Waydroid.desktop` makes that lookup fail and no Android window is shown.
+
+## Android hangs after asking for a window of an app without a launcher
+
+After `waydroid app launch com.google.android.projection.gearhead` (Android Auto has no launcher icon) and a manual session restart, Android's `system_server` hung and was killed by its watchdog every minute: `WATCHDOG KILLING SYSTEM PROCESS: Blocked in handler on ui thread`, stack in `BLASTBufferQueue.nativeCreate`. The relay then logs `head unit server did not start` forever. The cause is not proven. Waydroid's compositor loops on `wl_display_roundtrip` until a new window is configured, so a window the shell never accepts would block it, and with it SurfaceFlinger. Recovery, no root: `waydroid session stop`; the relay starts the session again.
+
 ## Smaller ones
 
 - Writing an empty Python string to `UDC` writes nothing. Write `"\n"` to unbind.
@@ -68,8 +85,8 @@ After several location clients were killed with a signal, `lomiri-location-servi
 
 ## Open problems
 
-- **Android windows on the phone.** With the Waydroid session started by the relay and running permanently, the Waydroid icon in the app drawer opens and closes at once, and `waydroid show-full-ui` from a shell, which worked at first, later showed nothing. Not understood yet. It matters because Android Auto's first-connection dialog appears on the phone.
+- **The stock Waydroid icon** stops working once the window has been swiped away. Worked around with a second launcher that goes through the relay.
+- **A complete session in a real car.** The one attempt so far stopped at the confirmation step, before that step was fixed.
 - **Bluetooth** in Waydroid, for calls and for wireless Android Auto.
 - **Battery:** suspend Waydroid when no car is connected.
 - **Speed and bearing** in the injected location.
-- **A real car** has not been tried.

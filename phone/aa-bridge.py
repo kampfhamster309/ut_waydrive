@@ -27,9 +27,16 @@ Android Auto handling:
     a session only, so the GPS receiver is off otherwise.
   * A keeper thread starts the Waydroid session after a reboot and re-arms when needed.
 
+Android's screen on the phone:
+  * For a car it has not seen before, Android Auto wants a confirmation on the phone
+    ("check your phone"). The daemon watches Android's log during a session and opens
+    the Android window when that happens (show_android_ui).
+  * The same can be requested by hand, without root: create the file
+    /run/user/<uid>/aa-show-android (see show-android.sh).
+
 Run as root. Log goes to stdout (journal when run as a service).
 """
-import fcntl, json, os, pwd, select, signal, socket, subprocess, sys, threading, time
+import fcntl, json, os, pwd, re, select, signal, socket, subprocess, sys, threading, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CFG = "/sys/kernel/config/usb_gadget"
@@ -56,10 +63,15 @@ ACCESSORY_GET_STRING = {name: (1 << 30) | (256 << 16) | (ord('M') << 8) | nr
                             ["manufacturer", "model", "description", "version", "uri", "serial"], 1)}
 
 USER = "phablet"
+KEEP_SESSION_LOGS = 6     # Android logs of the last sessions kept in diag/
+# Android Auto log lines that mean "the user has to do something on the phone".
+PHONE_PROMPT = re.compile(r"PREFLIGHT_UI_STARTING")
+PHONE_PROMPT_NOTE = re.compile(r"preflight|\bfrx", re.I)     # logged, to learn what a car triggers
 T0 = time.monotonic()
 armed = False             # a fresh, unused head unit server is waiting
 arm_lock = threading.RLock()        # arming and connecting never overlap
 session_active = threading.Event()
+ui_lock = threading.Lock()
 
 
 def log(*a):
@@ -332,6 +344,93 @@ def register_gps_provider():
     android("/system/bin/cmd", "location", "providers", "set-test-provider-enabled", "gps", "true")
 
 
+def android_prop(name):
+    r = android("/system/bin/getprop", name, timeout=8)
+    return r.stdout.strip() if r and r.returncode == 0 else ""
+
+
+def refresh_android_display():
+    """Make Android draw a few frames. Waydroid's compositor only looks at
+    waydroid.active_apps when it composes a frame."""
+    android("/system/bin/cmd", "statusbar", "expand-notifications", timeout=8)
+    time.sleep(0.5)
+    android("/system/bin/cmd", "statusbar", "collapse", timeout=8)
+    time.sleep(0.3)
+
+
+def show_android_ui(why):
+    """Open Android's screen as a window on the phone. Like 'waydroid show-full-ui',
+    but it first closes a window Waydroid still believes to be open: if Lomiri has
+    dropped that window, a plain show request does nothing. Closing through the
+    property does not remove Android tasks."""
+    with ui_lock:
+        if not android_booted():
+            log(f"cannot show Android ({why}): Android is not running")
+            return False
+        if android_prop("waydroid.open_windows") not in ("", "0"):
+            android("/system/bin/setprop", "waydroid.active_apps", "none")
+            for _ in range(6):
+                refresh_android_display()
+                if android_prop("waydroid.open_windows") in ("", "0"):
+                    break
+        android("/system/bin/setprop", "waydroid.active_apps", "Waydroid")
+        android("/system/bin/settings", "put", "global", "policy_control", "null*")
+        for _ in range(6):
+            refresh_android_display()
+            if android_prop("waydroid.open_windows") == "1":
+                log(f"Android window opened on the phone ({why})")
+                return True
+        log(f"could not open the Android window ({why})")
+        return False
+
+
+def ui_request_file():
+    return f"/run/user/{pwd.getpwnam(USER).pw_uid}/aa-show-android"
+
+
+def ui_requests():
+    """Background: the phone user asks for the Android window by creating a file."""
+    path = ui_request_file()
+    while True:
+        time.sleep(1)
+        try:
+            if not os.path.lexists(path):
+                continue
+            os.unlink(path)
+        except OSError:
+            continue
+        show_android_ui("requested")
+
+
+def watch_phone_prompt(stop):
+    """During a session: open the Android window when Android Auto asks for something
+    on the phone (first connection to a car)."""
+    try:
+        p = subprocess.Popen(LXC + ["/system/bin/logcat", "-T", "1", "-b", "main,system",
+                                    "-v", "brief"],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                             errors="replace")
+    except OSError:
+        return
+    def closer():
+        stop.wait()
+        p.terminate()
+    threading.Thread(target=closer, daemon=True).start()
+    shown = 0.0
+    seen = 0
+    for line in p.stdout:
+        if stop.is_set():
+            break
+        if seen < 12 and PHONE_PROMPT_NOTE.search(line):
+            seen += 1
+            log(f"Android: {line.strip()[:170]}")
+        if PHONE_PROMPT.search(line) and time.monotonic() - shown > 60:   # at most once a minute
+            shown = time.monotonic()
+            threading.Thread(target=show_android_ui, args=("Android Auto needs a confirmation",),
+                             daemon=True).start()
+    p.wait()
+
+
 def server_starts():
     r = android("/system/bin/logcat", "-d", "-s", "GH.DHUService")
     return r.stdout.count("Network server running") if r and r.returncode == 0 else None
@@ -396,10 +495,17 @@ def save_android_log(name):
         path = os.path.join(LOG_DIR, name)
         with open(path, "w") as f:
             f.write(r.stdout)
+        # also keep it under a dated name, so a later session does not overwrite it
+        dated = os.path.join(LOG_DIR, time.strftime("aa-session-%Y%m%d-%H%M%S.txt"))
+        with open(dated, "w") as f:
+            f.write(r.stdout)
+        old_logs = sorted(f for f in os.listdir(LOG_DIR) if f.startswith("aa-session-"))
+        for f in old_logs[:-KEEP_SESSION_LOGS]:
+            os.unlink(os.path.join(LOG_DIR, f))
         st = os.stat(HERE)
-        os.chown(path, st.st_uid, st.st_gid)
-        os.chown(LOG_DIR, st.st_uid, st.st_gid)
-        log(f"Android log saved to {path}")
+        for q in (path, dated, LOG_DIR):
+            os.chown(q, st.st_uid, st.st_gid)
+        log(f"Android log saved to {path} (copy: {os.path.basename(dated)})")
     except OSError as e:
         log(f"could not save Android log: {e}")
 
@@ -538,6 +644,7 @@ def _pump_wait(stop, stats, last_rx):
 def session():
     session_active.set()
     gps = None
+    watch_stop = threading.Event()
     try:
         switch_to_accessory()
         for _ in range(100):        # wait for the car to enumerate the accessory gadget
@@ -554,10 +661,12 @@ def session():
                 return
             if os.path.exists(GPS_BRIDGE):
                 gps = subprocess.Popen([sys.executable, "-u", GPS_BRIDGE, "--keep-provider"])
+            threading.Thread(target=watch_phone_prompt, args=(watch_stop,), daemon=True).start()
             pump(acc_fd, sock)
         finally:
             os.close(acc_fd)
     finally:
+        watch_stop.set()
         if gps is not None:
             gps.terminate()         # SIGTERM = clean stop of the location client
             try:
@@ -595,6 +704,7 @@ def main():
     time.sleep(0.5)
     arm_android_auto()
     threading.Thread(target=keeper, daemon=True).start()
+    threading.Thread(target=ui_requests, daemon=True).start()
     try:
         while True:
             log("waiting for a car (AOAP handshake) ...")

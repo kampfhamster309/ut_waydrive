@@ -93,15 +93,17 @@ The output should end with `enabled`, `active`, `Android Auto head unit server a
 
 ## 6. First connection
 
-The first time a head unit connects, Android Auto shows a welcome and permission dialog **on the phone**. It opens inside Android but is not brought to the front; show it with:
+The first time a car (or the emulator) connects, Android Auto wants a confirmation **on the phone**: terms, and permission for this car. The car shows "When safe, check your phone to start Android Auto" meanwhile. The relay opens Android's screen on the phone when that happens; unlock the phone and confirm. Later connections of the same car need nothing.
+
+To open Android's screen yourself, for example to grant an app its permissions:
 
 ```sh
-waydroid show-full-ui
+sh ~/android-auto/show-android.sh
 ```
 
-This worked on the first day but later stopped showing anything; see the open problems in [pitfalls.md](pitfalls.md).
+`deploy.sh` also installs a launcher icon named **Android** that runs this script. Prefer both over `waydroid show-full-ui` and over the stock Waydroid icon; see [pitfalls.md](pitfalls.md).
 
-Grant navigation apps their location permission, either in their own UI or with:
+Location permission for navigation apps can also be granted without the UI:
 
 ```sh
 sudo sh ~/android-auto/aa-grant-location.sh com.waze
@@ -115,7 +117,15 @@ cd headunit
 ./run-openauto.sh      # USB mode; contacts the attached phone on start
 ```
 
-Android Auto should appear in the emulator window within about 15 seconds. Watch the relay with `journalctl -u aa-bridge -f` on the phone. The emulator hangs when a session ends; restart the container for the next one.
+Android Auto should appear in the emulator window within about 15 seconds.
+
+To rehearse the first connection to a car, give the emulator a vehicle id the phone has not seen:
+
+```sh
+./run-openauto.sh --car-id 4711
+```
+
+Android Auto then asks for the confirmation on the phone, as it will for a real car. Watch the relay with `journalctl -u aa-bridge -f` on the phone. The emulator hangs when a session ends; restart the container for the next one.
 
 To test only the Android side, without USB: `phone/debug/aa-test.sh -1` on the phone (with `sudo`), forward the port with `phone/debug/tcp-forward.py`, and run the emulator with `--no-usb --host <phone-ip>`.
 
@@ -137,4 +147,4 @@ journalctl -u aa-bridge -n 30 --no-pager
 waydroid status
 ```
 
-Android's log of the last session is in `/userdata/android-auto/diag/aa-last-session.txt`.
+Android's log of the last session is in `/userdata/android-auto/diag/aa-last-session.txt`; dated copies of the last six sessions are next to it.
