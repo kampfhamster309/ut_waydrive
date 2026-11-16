@@ -15,9 +15,9 @@ car (USB host) ──AOAP──▶ kernel f_accessory ──▶ aa-bridge.py ─
 | | |
 |---|---|
 | Device | Volla Phone Plinius (MediaTek MT6878, Halium 14), Ubuntu Touch 24.04, Waydroid 1.6.3 with the LineageOS 20 (Android 13) GAPPS image |
-| Verified | Against the [OpenAuto](https://github.com/opencardev/openauto) head-unit emulator over USB: video, touch, Waze with the phone's real GPS, Spotify tile, first connection of an unknown car (confirmation on the phone), reconnecting a known car. Starts by itself after a reboot. |
+| Verified | Against the [OpenAuto](https://github.com/opencardev/openauto) head-unit emulator over USB: video, touch, Waze with the phone's real GPS, Spotify tile, first connection of an unknown car (confirmation on the phone), reconnecting a known car, music from Spotify (independent of the phone's volume). Starts by itself after a reboot. |
 | Real car | One Volkswagen head unit: USB handshake, relay, GPS and video work; the car showed Android Auto's "check your phone" screen. The confirmation step was fixed afterwards and has only been repeated with the emulator. |
-| **Not verified** | A complete session in a real car. Audio output. Behaviour while driving. Any other phone. |
+| **Not verified** | A complete session in a real car. Sound in a real car, and the navigation voice anywhere. Behaviour while driving. Any other phone. |
 
 This is a record of one working setup and of what it took to get there, published so others can adapt it. It is not a packaged product. Several steps are specific to this phone; [docs/porting.md](docs/porting.md) says which.
 
@@ -26,6 +26,7 @@ This is a record of one working setup and of what it took to get there, publishe
 - **`phone/aa-bridge.py`** — the relay, run as a systemd service. Switches the phone's USB gadget into accessory mode when a car asks, copies bytes between `/dev/usb_accessory` and Android Auto's head unit server, restores USB afterwards, starts Waydroid after a reboot and keeps a fresh Android Auto server ready.
   It also opens Android's screen on the phone when Android Auto wants a confirmation there (first connection to a car).
 - **`phone/aa-gps-bridge.py`** — feeds the phone's GPS into Android while a car is connected (Waydroid has no GNSS).
+- **`phone/waydroid-volume-sync.py`** — one volume for both systems: Ubuntu Touch's slider and silent mode govern Android's sound, and Android's volume sliders move Ubuntu Touch's.
 - **Waydroid fixes** for a Halium 14 host with an Android 13 container: GPU libraries, video encoder path, settings that survive a reboot.
 - **`headunit/`** — OpenAuto in Docker, to play the car at your desk.
 - **`docs/`** — how it works, setup, the pitfalls (one of them panics the kernel), porting notes.
@@ -57,6 +58,7 @@ Before that you need Waydroid running with Google apps, Android Auto installed i
 ```
 phone/            everything that goes onto the phone (~/android-auto)
   aa-bridge.py, aa-gps-bridge.py, gps/pos.qml, aa-bridge.service
+  waydroid-volume-sync.py
   aa-install.sh, aa-update.sh, waydroid-aa-persist.sh, waydroid-lxc-extra.sh
   show-android.sh (open Android's screen on the phone, no root)
   waydroid-mali-libs.sh, waydroid-install-splits.sh, aa-grant-location.sh

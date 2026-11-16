@@ -18,7 +18,7 @@ So the relay copies bytes between `/dev/usb_accessory` and `<waydroid-ip>:5277`.
 3. **Switch.** The relay asks `usb-moded` for its current mode, freezes it (`SIGSTOP`), unbinds `g1`, replaces its function links with the accessory function, sets `18d1:2d00` and binds again. This takes a few milliseconds.
 4. **Relay.** It opens `/dev/usb_accessory`, connects to port 5277 and pumps bytes both ways. It starts `aa-gps-bridge.py`.
    It also follows Android's log: when Android Auto announces its phone-side dialog (`PREFLIGHT_UI_STARTING`), the relay opens Android's screen as a window on the phone.
-5. **End.** The session ends when the UDC reports "not attached", when Android Auto closes the socket, or when nothing has arrived from the car for 20 s. The relay unbinds, removes the accessory link, thaws `usb-moded` and asks it over D-Bus to re-apply the previous mode (`charging_only`, then the old mode). It saves Android's logcat and arms a fresh server.
+5. **End.** The session ends when the UDC reports "not attached", when Android Auto closes the socket, or when a write to the car has been stuck for 20 s (the head unit is gone but the USB port is still up). The relay unbinds, removes the accessory link, thaws `usb-moded` and asks it over D-Bus to re-apply the previous mode (`charging_only`, then the old mode). It saves Android's logcat and arms a fresh server.
 
 A keeper thread starts the Waydroid session after a reboot and re-arms if Android Auto has died.
 
@@ -55,6 +55,18 @@ cmd location providers set-test-provider-location gps --location LAT,LON --accur
 ```
 
 once per second. Root needs the app-op first: `cmd appops set root android:mock_location allow`. The shell command has no arguments for speed or bearing.
+
+## Volume
+
+Waydroid's audio HAL plays through the phone's PulseAudio as one stream ("Waydroid") without a `media.role`. Ubuntu Touch applies its volumes per role and treats silent mode as a flag its own apps honour, so neither reaches Android: with the phone muted, Android still played its charging and touch sounds at full level.
+
+`waydroid-volume-sync.py` (a child of the relay, root) copies the settings instead of touching the stream:
+
+- A helper running as the phone user watches the sound indicator's D-Bus actions (`volume`, `silent-mode`, `mute` on `org.ayatana.indicator.sound`) and sets `volume` on request.
+- Android's volumes are read and set with `cmd media_session volume --stream N` (2 ring, 3 media, 4 alarm). Changes made in Android arrive through the event log (`logcat -b events -s volume_changed`).
+- There is one volume. Ubuntu Touch keeps one per role and shows the active one; Android's stream never makes "multimedia" the active role, so a role-by-role mapping left Android's media volume unreachable from the phone's slider.
+- Echoes are recognised on both sides (the daemon's own writes come back as events while a slider is still being dragged). Without that the two sides push each other back.
+- Nothing is synced during a car session, because Android's volume commands then act on the car's audio route.
 
 ## Waydroid on a Halium 14 host
 

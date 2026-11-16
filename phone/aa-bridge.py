@@ -34,6 +34,10 @@ Android's screen on the phone:
   * The same can be requested by hand, without root: create the file
     /run/user/<uid>/aa-show-android (see show-android.sh).
 
+Volume:
+  * waydroid-volume-sync.py is started as a child and kept running. It copies Ubuntu
+    Touch's volume and silent mode to Android and Android's volume back.
+
 Run as root. Log goes to stdout (journal when run as a service).
 """
 import fcntl, json, os, pwd, re, select, signal, socket, subprocess, sys, threading, time
@@ -49,11 +53,13 @@ ACC_DEV = "/dev/usb_accessory"
 WAYDROID_PORT = 5277
 CONNECT_TIMEOUT = 30      # seconds to wait for the head unit server
 CHUNK = 16384
-CAR_SILENCE_TIMEOUT = 20  # seconds without any data from the car before the session is ended
+CAR_STALL_TIMEOUT = 20    # seconds the car may leave our data unread before the session is ended
 PKG = "com.google.android.projection.gearhead"
 SERVICE = PKG + "/.companion.DeveloperHeadUnitNetworkService"
 LXC = ["lxc-attach", "-P", "/var/lib/waydroid/lxc", "-n", "waydroid", "--clear-env", "--"]
 GPS_BRIDGE = os.path.join(HERE, "aa-gps-bridge.py")
+VOLUME_SYNC = os.path.join(HERE, "waydroid-volume-sync.py")
+SESSION_FLAG = "/run/aa-bridge.session"     # exists during a car session (volume sync pauses)
 LOG_DIR = os.path.join(HERE, "diag")
 
 # f_accessory ioctls (include/uapi/linux/usb/f_accessory.h)
@@ -572,7 +578,7 @@ def pump(acc_fd, sock):
     """Copy bytes both ways until either side closes."""
     stop = threading.Event()
     stats = {"car->phone": 0, "phone->car": 0}
-    last_rx = [time.monotonic()]    # a live head unit sends pings and video acks all the time
+    writing = [0.0]                 # when the write to the car that is under way started
 
     def usb_to_tcp():
         try:
@@ -583,7 +589,6 @@ def pump(acc_fd, sock):
                     continue
                 if stats["car->phone"] == 0:
                     log(f"first bytes from car: {data[:12].hex()}")
-                last_rx[0] = time.monotonic()
                 sock.sendall(data)
                 stats["car->phone"] += len(data)
         except OSError as e:
@@ -603,9 +608,11 @@ def pump(acc_fd, sock):
                 if stats["phone->car"] == 0:
                     log(f"first bytes from phone: {data[:12].hex()}")
                 view = memoryview(data)
+                writing[0] = time.monotonic()
                 while view:
-                    n = os.write(acc_fd, view)
+                    n = os.write(acc_fd, view)      # blocks while the car does not read
                     view = view[n:]
+                writing[0] = 0.0
                 stats["phone->car"] += len(data)
         except OSError as e:
             log(f"USB write / TCP read ended: {e}")
@@ -614,7 +621,7 @@ def pump(acc_fd, sock):
     for fn in (usb_to_tcp, tcp_to_usb):
         threading.Thread(target=fn, daemon=True).start()
     try:
-        _pump_wait(stop, stats, last_rx)
+        _pump_wait(stop, stats, writing)
     finally:
         stop.set()
         try:
@@ -625,7 +632,7 @@ def pump(acc_fd, sock):
         log(f"session ended, bytes {stats}")
 
 
-def _pump_wait(stop, stats, last_rx):
+def _pump_wait(stop, stats, writing):
     n = 0
     while not stop.is_set():
         stop.wait(2)
@@ -633,9 +640,11 @@ def _pump_wait(stop, stats, last_rx):
         if read(f"/sys/class/udc/{udc_name()}/state") in ("not attached", ""):
             log("USB cable disconnected")
             stop.set()
-        elif time.monotonic() - last_rx[0] > CAR_SILENCE_TIMEOUT:
-            # e.g. the head unit shut down but keeps the USB port powered
-            log(f"nothing from the car for {CAR_SILENCE_TIMEOUT} s; ending the session")
+        elif writing[0] and time.monotonic() - writing[0] > CAR_STALL_TIMEOUT:
+            # The head unit is gone but the USB port is still up (it shut down, or the
+            # emulator was closed). Silence alone must not end a session: with a paused
+            # track and a static screen neither side has anything to send.
+            log(f"the car has not read our data for {CAR_STALL_TIMEOUT} s; ending the session")
             stop.set()
         elif n % 30 == 0:
             log(f"session running, bytes {stats}")
@@ -645,6 +654,10 @@ def session():
     session_active.set()
     gps = None
     watch_stop = threading.Event()
+    try:
+        open(SESSION_FLAG, "w").close()
+    except OSError:
+        pass
     try:
         switch_to_accessory()
         for _ in range(100):        # wait for the car to enumerate the accessory gadget
@@ -675,6 +688,27 @@ def session():
                 gps.kill()
         switch_to_normal()
         session_active.clear()
+        try:
+            os.unlink(SESSION_FLAG)
+        except OSError:
+            pass
+
+
+volume_sync = None
+
+
+def volume_sync_runner():
+    """Background: keep the volume sync daemon running."""
+    global volume_sync
+    if not os.path.exists(VOLUME_SYNC):
+        return
+    while True:
+        try:
+            volume_sync = subprocess.Popen([sys.executable, "-u", VOLUME_SYNC])
+            volume_sync.wait()
+        except OSError as e:
+            log(f"volume sync could not start: {e}")
+        time.sleep(15)
 
 
 class AccessoryMonitor:
@@ -699,12 +733,17 @@ def main():
     def on_term(*_):                # service stop: unwind like Ctrl-C so the gadget is restored
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, on_term)
+    try:
+        os.unlink(SESSION_FLAG)     # left over from a crash
+    except OSError:
+        pass
     setup_gadget()
     monitor = AccessoryMonitor()
     time.sleep(0.5)
     arm_android_auto()
     threading.Thread(target=keeper, daemon=True).start()
     threading.Thread(target=ui_requests, daemon=True).start()
+    threading.Thread(target=volume_sync_runner, daemon=True).start()
     try:
         while True:
             log("waiting for a car (AOAP handshake) ...")
@@ -721,6 +760,9 @@ def main():
             arm_android_auto()
     except KeyboardInterrupt:
         log("stopped")
+    finally:
+        if volume_sync is not None and volume_sync.poll() is None:
+            volume_sync.terminate()
 
 
 if __name__ == "__main__":

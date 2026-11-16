@@ -74,6 +74,10 @@ Observed with Lomiri/qtmir 0.7.2 and Waydroid 1.6.3:
 
 After `waydroid app launch com.google.android.projection.gearhead` (Android Auto has no launcher icon) and a manual session restart, Android's `system_server` hung and was killed by its watchdog every minute: `WATCHDOG KILLING SYSTEM PROCESS: Blocked in handler on ui thread`, stack in `BLASTBufferQueue.nativeCreate`. The relay then logs `head unit server did not start` forever. The cause is not proven. Waydroid's compositor loops on `wl_display_roundtrip` until a new window is configured, so a window the shell never accepts would block it, and with it SurfaceFlinger. Recovery, no root: `waydroid session stop`; the relay starts the session again.
 
+## Silence is not a dead car
+
+An early relay ended the session when nothing had arrived from the car for 20 s. With a paused track and a static screen neither side sends anything (the emulator, at least, sends no pings), so a healthy session was cut off 25 s after pausing the music. A real head unit happened to send data all the time, which hid the problem. The relay now only gives up when its own write to the car has been blocked for 20 s.
+
 ## Smaller ones
 
 - Writing an empty Python string to `UDC` writes nothing. Write `"\n"` to unbind.

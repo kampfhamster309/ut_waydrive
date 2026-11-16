@@ -16,7 +16,7 @@ SESS="runuser -u $U -- env XDG_RUNTIME_DIR=$R DBUS_SESSION_BUS_ADDRESS=unix:path
 A="lxc-attach -P /var/lib/waydroid/lxc -n waydroid --clear-env --"
 
 mkdir -p $DST/gps
-cp $HERE/aa-bridge.py $HERE/aa-gps-bridge.py $HERE/waydroid-lxc-extra.sh $HERE/aa-grant-location.sh $HERE/aa-bridge.service $DST/
+cp $HERE/aa-bridge.py $HERE/aa-gps-bridge.py $HERE/waydroid-volume-sync.py $HERE/waydroid-lxc-extra.sh $HERE/aa-grant-location.sh $HERE/aa-bridge.service $DST/
 cp $HERE/gps/pos.qml $DST/gps/
 chown -R root:root $DST; chmod -R go-w $DST; chmod 755 $DST $DST/gps
 echo "scripts installed in $DST"

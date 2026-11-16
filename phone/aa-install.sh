@@ -22,6 +22,7 @@ echo "== 1. stopping relays"
 systemctl stop aa-bridge 2>/dev/null
 pkill -TERM -f "[a]a-bridge.py" 2>/dev/null && sleep 6
 pkill -TERM -f "[a]a-gps-bridge.py" 2>/dev/null && sleep 3
+pkill -TERM -f "[w]aydroid-volume-sync.py" 2>/dev/null
 U=phablet; R=/run/user/$(id -u $U)
 runuser -u $U -- env XDG_RUNTIME_DIR=$R DBUS_SESSION_BUS_ADDRESS=unix:path=$R/bus waydroid session stop >/dev/null 2>&1
 sleep 2; systemctl stop waydroid-container 2>/dev/null
